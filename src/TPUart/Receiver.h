@@ -141,14 +141,11 @@ class Receiver
 
     // Hält die gerade einlaufende Sequenz - entweder ein Frame oder eine Steuerbyte-Sequenz, nie beides
     // zugleich, deshalb reicht dafür ein Puffer.
-    // IST und SOLL, und der Unterschied ist der Punkt: _bufferPos sagt, wohin das nächste Byte geht -
-    // also wie viel tatsächlich eingelaufen ist, auch bei Steuerbyte-Sequenzen, die gar keine Frame-Größe
-    // haben. _frameSize sagt, wie lang das Telegramm laut seinem Kopf sein müsste. Auseinander laufen sie,
-    // wenn eine Pause abschneidet - genau das meldet Frame::isTruncated() später.
     //
-    // Zum Namen: das Feld hieß einmal _length, was neben _frameSize nichts unterschied ("length" und
-    // "size" sind fast dasselbe Wort). "_bufferSize" wäre die andere Falle - so heißt hier die KAPAZITÄT
-    // (TPUART_BUFFER_SIZE), beides nebeneinander läse sich wie ein Tippfehler.
+    // IST und SOLL, und der Unterschied ist der Punkt: _bufferPos sagt, wohin das nächste Byte geht - also
+    // wie viel tatsächlich eingelaufen ist, auch bei Steuerbyte-Sequenzen, die gar keine Frame-Größe haben.
+    // _frameSize sagt, wie lang das Telegramm laut seinem Kopf sein müsste. Auseinander laufen sie, wenn
+    // eine Pause abschneidet - das Telegramm wird dann als INVALID gemeldet.
     uint8_t _buffer[TPUART_BUFFER_SIZE];
     size_t _bufferPos = 0;
 
@@ -251,12 +248,12 @@ class Receiver
 
     // --- KOMPAT: Diagnosewerte der alten Library ------------------------------------------------------
     //
-    // Beides PLATZHALTER, die 0 liefern. Sie zeigten den Füllstand des SearchBuffers und wie viele Bytes
-    // dieser noch erwartet - beides gibt es hier nicht mehr, weil der Empfang ohne Suchpuffer arbeitet.
-    // Ein sinnvolles Gegenstück wäre state(), das ist aber etwas anderes und keine Zahl. Können weg,
-    // sobald OGM-Common seine "bcu"-Ausgabe umgestellt hat.
-    unsigned short getSearchBufferPosition() const; // DUMMY, immer 0
-    unsigned short getAwaitBytes() const;           // DUMMY, immer 0
+    // Beide Namen stammen aus der Suche im Puffer, die es hier nicht mehr gibt - sie liefern deshalb nicht
+    // das, wonach sie heißen, sondern die nächstliegende Aussage über den heutigen Empfangspfad. Zusammen
+    // zeigen sie, wo im Telegramm die Verarbeitung gerade steht. Können weg, sobald bestätigt ist, dass
+    // sie niemand mehr druckt.
+    unsigned short getSearchBufferPosition() const; // Bytes der laufenden Sequenz im Puffer
+    unsigned short getAwaitBytes() const;           // noch ausstehende Bytes des laufenden Telegramms
 };
 
 } // namespace TPUart

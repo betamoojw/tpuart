@@ -160,8 +160,8 @@ class Statistics
 
     // HÖCHSTSTÄNDE DER DREI WARTESCHLANGEN. Sie beantworten die Auslegungsfrage, BEVOR etwas überläuft:
     // ein Überlaufzähler sagt nur, dass es zu spät war, ein Höchststand sagt, wie viel Luft noch ist.
-    // Die Einheit steckt im Namen, denn sie ist nicht dieselbe - RX- und Steuerring zählen Bytes, die
-    // Sendequeue zählt Telegramme.
+    // Alle drei zählen BYTES - die Sendequeue tat das früher in Telegrammen, seit sie ein Bytepuffer ist,
+    // misst sie sich wie die beiden anderen.
     volatile uint32_t _rxQueuePeakBytes = 0;
     volatile uint32_t _txControlQueuePeakBytes = 0;
     volatile uint32_t _txQueuePeakBytes = 0;
@@ -270,8 +270,8 @@ class Statistics
     void incrementRxQueueOverflows(uint32_t increment = 1);
     void incrementTxControlQueueOverflows(uint32_t increment = 1);
 
-    // Anders als die übrigen Überläufe wird dieser aus dem HAUPTKONTEXT gezählt (sendFrame()), nicht aus
-    // dem Tick - der Zähler hat damit trotzdem genau einen Schreiber.
+    // Anders als die übrigen Überläufe wird dieser aus dem HAUPTKONTEXT gezählt (pushTransmitQueue()),
+    // nicht aus dem Tick - der Zähler hat damit trotzdem genau einen Schreiber.
     void incrementTxQueueOverflows(uint32_t increment = 1);
 
     // Aus dem Hauptkontext (connectionLost()).
@@ -360,9 +360,8 @@ class Statistics
     uint32_t getChipProtocolErrors() const;
     uint32_t getChipTemperatureWarnings() const;
 
-    // Höchststände, siehe die Felder. Gegen die Größen aus Types.h zu lesen: getRxQueuePeakBytes() gegen
-    // TPUART_RX_QUEUE_SIZE, getTxControlQueuePeakBytes() gegen TPUART_CTRL_QUEUE_SIZE,
-    // getTxQueuePeakBytes() gegen TPUART_TX_QUEUE_COUNT.
+    // Höchststände, siehe die Felder. Zu lesen gegen TPUART_RX_QUEUE_SIZE (Receiver.h),
+    // TPUART_CTRL_QUEUE_SIZE (Transmitter.h) und TPUART_TX_BUFFER_SIZE (TransmitQueue.h).
     uint32_t getRxQueuePeakBytes() const;
     uint32_t getTxControlQueuePeakBytes() const;
     uint32_t getTxQueuePeakBytes() const;
@@ -431,12 +430,12 @@ class Statistics
     // Damit das trägt, werden die Bytes JE BYTE gezählt (siehe Receiver::processFrameByte()) und nicht am
     // Sequenzende in einem Rutsch. Sonst trüge ein laufendes Telegramm 0 bei und brächte beim Abschluss
     // seine ganze Busbelegung mit - bei einem maximalen Telegramm 356ms, die im falschen Fenster landen,
-    // also bis zu 12% bei 3s Fensterbreite. Genau dieser Fehler hätte ein "über 100" erzeugt, das nichts
+    // also über ein Drittel der Messsekunde. Genau dieser Fehler hätte ein "über 100" erzeugt, das nichts
     // bedeutet, und damit die Aussage der Zahl zerstört.
     //
     // Was als Rest bleibt, ist der Zuschlag JE TELEGRAMM: der wird weiterhin erst beim Abschluss fällig,
     // weil vorher nicht feststeht, ob das Telegramm heil ist. Das sind 7916µs für ein Telegramm an der
-    // Fenstergrenze, bei 3s also 0,26% - vernachlässigbar.
+    // Fenstergrenze, bei 1s also 0,8% - vernachlässigbar.
     uint16_t getBusLoadPercent() const;
 
     // --- KOMPAT: Namen der alten Library ----------------------------------------------------------------

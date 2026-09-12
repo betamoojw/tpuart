@@ -153,8 +153,9 @@ bool ESP32::write(char value)
 int ESP32::read()
 {
     if (!available()) return -1;
-    char c;
-    return uart_read_bytes(_uart, (uint8_t *)&c, 1, 0) == 1 ? c : -1;
+
+    uint8_t value;
+    return uart_read_bytes(_uart, &value, 1, 0) == 1 ? value : -1;
 }
 
 bool ESP32::overflow()

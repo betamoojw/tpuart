@@ -12,11 +12,7 @@ namespace TPUart
 class DataLinkLayer;
 
 // Die Sendewarteschlange liegt in TransmitQueue - ein statischer Bytepuffer, dem Hauptkontext allein
-// gehörend, prioritätsgeordnet. Ihre Größe steht dort als TPUART_TX_BUFFER_SIZE.
-//
-// Hier stand einmal TPUART_TX_QUEUE_COUNT und eine Zeigertabelle auf Heap-Blöcke. Das war die einzige
-// fragmentierende Allokation der Library, im Bustakt über die Lebensdauer des Geräts - und eine Grenze in
-// TELEGRAMMEN, obwohl ein gewöhnliches nur rund 5% eines maximalen ausmacht.
+// gehörend, prioritätsgeordnet. Ihre Größe und die Begründung dafür stehen dort.
 
 // Der SCHLIMMSTE Fall eines Telegrammbytes: Offset-Byte, Positionsbyte, Datenbyte. Die drei müssen
 // unmittelbar aufeinander folgen, sonst schöbe sich ein zwischendurch fälliges Acknowledge dazwischen.
@@ -128,10 +124,6 @@ class Transmitter
     // DIE SENDEWARTESCHLANGE GEHÖRT DEM HAUPTKONTEXT ALLEIN - siehe TransmitQueue.h. Der Tick fasst sie
     // nicht an; er bekommt genau ein Telegramm vorgelegt. Nur unter dieser Bedingung darf darin überhaupt
     // nach Priorität umsortiert werden.
-    //
-    // Vorher lagen hier drei Indizes und ein Feld aus Heap-Zeigern. Der dritte Index existierte allein
-    // deshalb, weil free() nicht in den Tick darf - jetzt gibt der Hauptkontext ohnehin selbst frei, und
-    // es gibt gar keinen Heap mehr.
     TransmitQueue _queue;
 
     // DIE VORLAGE: ein Telegramm, das für den Tick bereitliegt. Zeigt IN den Puffer der Warteschlange,
@@ -185,8 +177,8 @@ class Transmitter
     volatile bool _confirmTimeout = false;
 
 
-    // Holt das nächste Telegramm aus der Warteschlange in den Sendepuffer. Liefert true, wenn danach eines
-    // zum Senden bereitsteht. Gibt NICHTS frei - das gehört in den Hauptkontext (releaseSentTelegrams()).
+    // Holt das vorgelegte Telegramm in den Sendepuffer. Liefert true, wenn danach eines zum Senden
+    // bereitsteht. Gibt NICHTS frei - das gehört in den Hauptkontext (stageNextTelegram()).
     bool startNextTransmission();
 
     // Setzt den Fortschritt im Sendepuffer auf Anfang. Einzige Stelle, an der das passiert - gerufen vom
@@ -269,8 +261,8 @@ class Transmitter
     TxState state() const;
     bool isTransmitting() const;
 
-    // Belegte Plätze der Sendewarteschlange. Mitgezählt sind auch die schon abgeholten, aber noch nicht
-    // freigegebenen: erst loop() macht deren Plätze wieder verfügbar.
+    // Belegte BYTES der Sendewarteschlange, gegen queueSize() zu lesen. Mitgezählt ist auch ein bereits
+    // vorgelegtes Telegramm: erst loop() gibt dessen Platz wieder frei.
     uint32_t queueUsed() const;
     uint32_t queueSize() const;
 };

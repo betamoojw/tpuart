@@ -89,9 +89,9 @@ constexpr uint32_t TPUART_DETECT_RESPONSE_TIMEOUT_MS = 50;
 // Der Leerlaufpfad von tick() ist der mit Abstand am häufigsten durchlaufene Code hier und soll so kurz
 // wie möglich bleiben. Die Reihenfolge der Abbruchbedingungen ist deshalb nicht beliebig: erst die reinen
 // Flag-Vergleiche (_initialized, _connected, TxState), danach erst alles, was das Interface anfassen muss.
-// Aktuell kostet ein Leerlauf-Tick EINEN MMIO-Zugriff (den DMA-Zähler in available()) und rund ein Dutzend
-// Vergleiche. Das micros() in checkPause() fällt dabei nicht an: gemessen wird nur, solange eine Sequenz
-// offen ist, und zwischen zwei Telegrammen ist sie das nicht.
+// Aktuell kostet ein Leerlauf-Tick ZWEI MMIO-Zugriffe - micros() für die Taktmessung und den DMA-Zähler in
+// available() - plus rund ein Dutzend Vergleiche. Das micros() in checkPause() kommt nur dazu, solange eine
+// Sequenz offen ist; zwischen zwei Telegrammen ist sie das nicht.
 class DataLinkLayer
 {
     friend class Receiver;
@@ -112,7 +112,7 @@ class DataLinkLayer
 
   private:
     // Was sich beide Hälften teilen. Sie greifen darauf über ihre _dll-Referenz zu (dafür sind sie friend),
-    // halten also keine eigenen Referenzen - damit hängt hier auch keine Deklarationsreihenfolge dran.
+    // halten also keine eigenen Referenzen - Begründung in Receiver.h.
     // Zeiger und nicht Referenz, weil die alte Library das Interface erst in begin() bekam - der Aufrufer
     // legt den DataLinkLayer an, bevor die Plattform ihr Interface erzeugt hat (siehe KOMPAT-begin()).
     // Ohne Interface tut tick()/loop() nichts.

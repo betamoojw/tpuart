@@ -7,9 +7,9 @@ namespace TPUart
 
 class Frame;
 
-// Wie viele Absender gleichzeitig beobachtet werden. Wie in der alten Library 50; mehr Geräte, die
-// innerhalb des Zeitfensters gleichzeitig senden, gibt es real nicht. Wird es doch eng, verdrängt der
-// älteste Eintrag - schlimmstenfalls kommt eine Wiederholung durch, nichts geht verloren.
+// Wie viele Absender gleichzeitig beobachtet werden. Wie in der alten Library 50; mehr Geräte, die sich in
+// ihren Sendungen abwechseln, gibt es real nicht. Wird es doch eng, verdrängt der am längsten nicht mehr
+// gesehene Absender - schlimmstenfalls kommt eine Wiederholung durch, nichts geht verloren.
 #ifndef TPUART_REPETITION_FILTER_COUNT
 #define TPUART_REPETITION_FILTER_COUNT 50
 #endif

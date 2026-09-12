@@ -1230,19 +1230,19 @@ der Header; bei 2-3µs je Tick gegen ein 500µs-Intervall ist das nicht messbar.
   missdeutet.
   Der Wächter schweigt zu beidem zu Recht, sobald der Mittelwert stimmt - dafür gibt es
   `getTickDeferrals()` und `getTickLastDeferredUs()` daneben.
-  `getBusLoad()` hat die Einheit Byte je Sekunde und ist ein **gleitender Mittelwert** über
-  `BUS_LOAD_WINDOW` (3) Sekunden, fortgeschaltet alle `BUS_LOAD_SLICE_MS` (1000). Beide sind feste
-  `static constexpr`-Member, keine überschreibbaren Makros - sie beschreiben eine Anzeige, keine
-  Betriebsart. Eine Sekunde allein schwankte stark, da ein einzelnes 263-Oktett-Telegramm den Bus
-  356ms belegt.
-  **Messen und Lesen sind getrennte Aufgaben**: `sampleBusLoad()` läuft aus `loop()` und schiebt den
-  rohen *Zähler* samt Zeitstempel in einen Ring; `getBusLoad()` teilt die Differenz zwischen dem
-  **ältesten Eintrag und dem lebenden Zähler** durch die Zeit dazwischen. Aus zwei Endpunkten zu
-  rechnen statt aus drei Teilraten ergibt dieselbe Zahl mit einer Rundung statt dreien. Der neueste
-  Punkt wird nicht gespeichert - er entsteht beim Lesen, weshalb der Ring genau `BUS_LOAD_WINDOW`
-  Einträge hält und der Wert nie eine Sekunde hinterherhinkt. Die Spanne schwebt damit zwischen
-  `BUS_LOAD_WINDOW - 1` und `BUS_LOAD_WINDOW` Sekunden, und ein verspäteter Hauptloop dehnt sie weiter;
-  das ist harmlos, da der Teiler die *gemessene* Zeit ist, nie eine angenommene.
+  `getBusLoad()` hat die Einheit Byte je Sekunde und beschreibt **genau ein Messintervall** von
+  `BUS_LOAD_INTERVAL_MS` (1000) - einen gleitenden Mittelwert gibt es bewusst **nicht** (Entscheidung
+  des Anwenders): der Wert soll die letzte Sekunde beschreiben und nicht ein Mittel über mehrere. Die
+  Konstante ist ein festes `static constexpr`-Member, kein überschreibbares Makro - sie beschreibt eine
+  Anzeige, keine Betriebsart. Der Preis ist bekannt und hingenommen: ein einzelnes 263-Oktett-Telegramm
+  belegt den Bus 356ms, die Anzeige springt dadurch stärker als der Bus sich ändert. Wer glätten will,
+  mittelt über mehrere dieser fertigen Werte, statt das Fenster zu verbreitern.
+  **Gerechnet wird beim MESSEN, nicht beim Ablesen**: `sampleBusLoad()` läuft aus `loop()`, hält
+  Zählerstände plus Zeitstempel als Bezugspunkt und schließt die Sekunde ab, sobald das Intervall voll
+  ist; `getBusLoad()` liefert das fertige Ergebnis, beliebig oft und ohne es zu verändern. Ein
+  Bezugspunkt, der bei jedem Lesen mitzöge, ergäbe Spannen von Millisekunden - ein einzelnes Telegramm
+  darin sähe wie ein völlig überlasteter Bus aus. Geteilt wird durch die *gemessene* Spanne, nie durch
+  die angenommenen 1000ms, ein verspäteter Hauptloop verfälscht also nichts.
   Was hineinfließt, ist bewusst eng gefasst: **nur Telegrammbytes, Polls eingeschlossen**. Steuerbytes
   kommen von der BCU, nicht vom Bus, und gehören zur Auslastung der Host-Leitung; im Resync verworfene
   Bytes lassen sich nichts zuordnen.
@@ -1298,7 +1298,7 @@ der Header; bei 2-3µs je Tick gegen ein 500µs-Intervall ist das nicht messbar.
   `processPollByte()` / `processControlByte()`), nicht mehr am Sequenzende in einem Rutsch. Der alte Weg
   hatte einen echten Zuordnungsfehler: ein laufendes Telegramm trug 0 bei und brachte beim Abschluss seine
   gesamte Busbelegung mit, auch den Teil, der vor dem Fenster lag - bei einem maximalen Telegramm 356ms,
-  bei 3s Fensterbreite also bis zu 12%. Das hätte ein "über 100" erzeugt, das nichts bedeutet, und damit
+  also über ein Drittel der Messsekunde. Das hätte ein "über 100" erzeugt, das nichts bedeutet, und damit
   genau die Aussage zerstört, für die der Deckel weggelassen wurde. Die Kategorie steht dabei in jedem Pfad
   schon mit Byte 0 fest, und der Zähler hat weiterhin genau einen Schreiber (den Tick) - es braucht also
   weder Klassifikation im Nachhinein noch Atomarität. Achte auf die Reihenfolge in
@@ -1306,10 +1306,7 @@ der Header; bei 2-3µs je Tick gegen ein 500µs-Intervall ist das nicht messbar.
   Telegrammbyte zählt.
   Als Rest bleibt der Zuschlag **je Telegramm**, der weiterhin erst beim Abschluss fällig wird - vorher
   steht nicht fest, ob das Telegramm heil ist. Für ein Telegramm an der Fenstergrenze sind das 7916µs,
-  bei 3s also 0,26%.
-  Die Ringarithmetik ("ältester Eintrag plus Spanne bis jetzt") liegt für beide Auskünfte in
-  `oldestBusLoadSample()` - zwei Kopien davon liefen früher oder später auseinander, besonders die
-  Fallunterscheidung "Ring schon voll oder erst anlaufend".
+  bei 1s also 0,8%.
   Früher legte der Leser selbst das Fenster fest: das Intervall war "Zeit seit dem letzten Aufruf", was
   von der Konsole kommt und damit unbegrenzt ist - die erste Anzeige nach Stunden Laufzeit mittelte
   über die gesamte Laufzeit, und der Zwischenwert (Bytes × 1000) lief über 32 Bit über. Eine Messung

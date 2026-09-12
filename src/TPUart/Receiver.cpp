@@ -445,20 +445,11 @@ void Receiver::sendAcknowledge()
     // Modus - Gegendruck erzeugen, nicht Telegramme annehmen.
     if (_dll.isBusyMode() && _dll.isAutoAcknowledge()) return;
 
-    // DIE AUTO-QUITTUNG DES CHIPS IST EIN FALLBACK, KEIN ERSATZ. Sie greift, wenn der Host nicht
-    // rechtzeitig antwortet - sie nimmt ihm die Antwort aber nicht ab. Wer eine gesetzte Adresse als
-    // "der Chip macht das schon" liest und deshalb selbst schweigt, quittiert am Ende gar nicht:
-    // die Adressauswertung des Chips deckt nur seine EIGENE physikalische Adresse ab, während der
-    // Callback auch Gruppenadressen und - bei einem Koppler - fremde Einzeladressen bejaht.
-    //
-    // Genau dieser Fehler stand hier: ein `if (_dll.isAutoAcknowledge()) return;`. Die Folge war im Log
-    // unmittelbar zu sehen - Telegramme kamen mit ADDRESSED, aber ohne ACK herein, und der Absender
-    // wiederholte sie dreimal, weil niemand auf dem Bus quittiert hatte. Die alte Library hat an dieser
-    // Stelle IMMER quittiert; das war kein Versäumnis, sondern richtig.
-    //
-    // Der Preis ist bekannt und hinnehmbar: auf dem NCN beendet ein U_Ackn.req einen aktiven BUSY-Modus
-    // (p.35). Der wird hier von niemandem benutzt, und die alte Library lebte seit Jahren damit.
-    // _autoAcknowledge bleibt als Auskunft über den Chipzustand erhalten - es steuert nur nichts mehr.
+    // HIER WIRD NICHT AUF isAutoAcknowledge() GEPRÜFT, und das ist Absicht: die Auto-Quittung des Chips ist
+    // ein Fallback für einen zu langsamen Host, kein Ersatz für dessen Antwort. Sie deckt nur die EIGENE
+    // physikalische Adresse des Chips ab, während der Callback auch Gruppenadressen und - bei einem Koppler -
+    // fremde Einzeladressen bejaht. Genau dieser Fehler stand hier einmal; am Bus kamen Telegramme mit
+    // ADDRESSED, aber ohne ACK herein, und der Absender wiederholte sie dreimal.
 
     // Liegen im Interface schon so viele Bytes bereit, wie von diesem Frame überhaupt noch ausstehen, dann
     // ist das Telegramm inklusive Prüfsummen-Oktett bereits vollständig eingetroffen - auf dem Bus also
@@ -516,17 +507,9 @@ void Receiver::processControlByte(uint8_t value)
         return;
     }
 
-    // Der Chip meldet seine Betriebsarten. Für die Auto-Quittung ist das eine Bestätigung, keine Nachricht:
-    // dass sie mit der Adresse aktiv wird, weiß applyConfiguration() schon beim Absetzen - und muss es auch
-    // wissen, weil dieser Dienst nur beim NCN existiert. Gilt aber trotzdem der Chip: was er hier meldet,
-    // ist der wahre Zustand, auch wenn er dem Flag widerspricht.
+    // Beide werden HIER im Tick ausgewertet und nicht erst aus dem Ringpuffer heraus - die Begründung steht
+    // an den beiden Empfängern im DataLinkLayer.
     if ((value & U_CONFIGURE_MASK) == U_CONFIGURE_IND) _dll.configureIndication(value);
-
-    // Ein Reset - von wem auch immer ausgelöst: vom Wachhund des Transmitters, von reset() aus der
-    // Anwendung, oder von der BCU selbst. In jedem Fall ist ihr Sendepuffer leer und ihr Zustand definiert.
-    // Unterschieden wird deshalb NICHT, wer den Reset veranlasst hat: liegt noch ein Telegramm im
-    // Sendepuffer, beginnt es einfach von vorn; liegt keines, holt der Tick das nächste aus der
-    // Warteschlange.
     if (value == U_RESET_IND) _dll.resetIndication();
 
     // Bestätigung des eigenen Versands. Sie wird hier freigegeben und nicht erst in
@@ -659,9 +642,9 @@ void Receiver::processQueue()
 
         // Der Produzent stellt nur Längen <= TPUART_BUFFER_SIZE ein, im geordneten Betrieb kann das hier
         // also nicht greifen. Es bleibt trotzdem stehen, weil die Folge sonst maximal unangenehm wäre:
-        // length ist 16 Bit breit, _deliverBuffer aber ein 263 Byte großes MEMBER - ein überlanger Wert
-        // würde die States, die Puffer und die std::function-Callbacks überschreiben. Ein einzelner
-        // korrupter Eintrag darf nicht das ganze Objekt zerlegen, also: Ring verwerfen und weitermachen.
+        // length ist 16 Bit breit, das Frame darunter fasst nur 263 Byte - ein überlanger Wert schriebe
+        // über dessen Stackrahmen hinaus. Ein einzelner korrupter Eintrag darf nicht den ganzen Kontext
+        // zerlegen, also: Ring verwerfen und weitermachen.
         if (length > TPUART_BUFFER_SIZE)
         {
             // NICHT über _queueOverflow melden - das hieße "der Ring war voll", und das ist etwas ganz
@@ -722,22 +705,14 @@ RxState Receiver::state() const
 }
 
 // --- KOMPAT, siehe Header ------------------------------------------------------------------------------
-//
-// Beide Namen stammen aus der Suche im Puffer, die es hier nicht mehr gibt - sie liefern deshalb nicht
-// mehr das, wonach sie heißen, sondern die nächstliegende Aussage über den heutigen Empfangspfad. Das ist
-// besser als die konstante 0 von vorher: die Aufrufer drucken beide Werte nebeneinander, und zwei tote
-// Spalten sagen gar nichts, während diese beiden zusammen zeigen, wo im Telegramm die Verarbeitung
-// gerade steht.
 
-// Wie viele Bytes der laufenden Sequenz schon im Puffer liegen. Im Leerlauf 0.
 unsigned short Receiver::getSearchBufferPosition() const
 {
     return (unsigned short)_bufferPos;
 }
 
-// Wie viele Bytes des laufenden Telegramms noch ausstehen. 0, solange die Größe noch nicht feststeht -
-// sie ergibt sich erst aus dem Längenoktett, und vorher ist die Restlänge schlicht unbekannt. Der
-// Vergleich fängt zusätzlich den Fall ab, dass _bufferPos über die Grenze hinausgelaufen ist.
+// 0, solange die Größe noch nicht feststeht - sie ergibt sich erst aus dem Längenoktett. Der Vergleich
+// fängt zusätzlich den Fall ab, dass _bufferPos über die Grenze hinausgelaufen ist.
 unsigned short Receiver::getAwaitBytes() const
 {
     if (_frameSize == 0 || _bufferPos >= _frameSize) return 0;

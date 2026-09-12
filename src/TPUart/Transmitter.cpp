@@ -279,29 +279,20 @@ void Transmitter::restart()
 // halbes Telegramm später fortzusetzen oder zu wiederholen ergibt keinen Sinn, auf dem Bus hat nie jemand
 // einen Anfang gesehen. Deshalb ABBRECHEN und nicht wie in restart() von vorn beginnen.
 //
-// LÄUFT IM TICK, und daran hängt die Korrektheit gleich zweifach:
-//   - _state behält genau einen Schreiber. Aus dem Hauptkontext ginge es nicht, dort kollidierte es mit
-//     confirmed() und echoReceived(), die der Empfangspfad aus demselben Tick heraus ruft.
-//   - _queueTail ebenso. Der naheliegende Weg - der Hauptkontext leert die Warteschlange, weil dort der
-//     Heap zu Hause ist - war ein Wettlauf: er müsste _queueTail schreiben, und die Bedingung dafür
-//     ("im Busmonitor fasst der Tick die Warteschlange nicht an") kann der Tick zwischen Prüfung und
-//     Schreiben aufheben, indem eine U_Reset.ind eintrifft und _busMonitor löscht. Auf dem ESP32 läuft
-//     der Tick echt parallel, das ist also kein reines Verdrängungsproblem.
-// Der Index wird hier nur VORGEZOGEN; freigegeben wird der Heap wie immer aus loop()
-// (releaseSentTelegrams()), für das die übersprungenen Einträge schlicht wie abgeholte aussehen.
+// LÄUFT IM TICK, und daran hängt die Korrektheit: _state behält damit genau einen Schreiber. Aus dem
+// Hauptkontext ginge es nicht, dort kollidierte es mit confirmed() und echoReceived(), die der Empfangspfad
+// aus demselben Tick heraus ruft.
+//
+// GERÄUMT WIRD HIER TROTZDEM NUR DIE VORLAGE. Die Warteschlange gehört dem Hauptkontext allein und wird von
+// stageNextTelegram() geleert - diese Aufteilung ist es, die den früheren Wettlauf auflöst: solange der Tick
+// _queueTail selbst vorzog, konnte die Bedingung dafür ("im Busmonitor fasst der Tick die Queue nicht an")
+// zwischen Prüfung und Schreiben wegfallen, weil eine eintreffende U_Reset.ind _busMonitor löscht. Auf dem
+// ESP32 läuft der Tick echt parallel, das war also kein reines Verdrängungsproblem.
 //
 // _chipOffsetValid wird mit zurückgesetzt, weil der Offset im Register des Chips liegt und über den
 // Moduswechsel hinweg nicht mehr als bekannt gelten darf - dieselbe Überlegung wie in beginTransmission().
-//
-// Ein Telegramm, das der Hauptkontext GERADE einstellt, kann diesem Zugriff entgehen: ist _queueHead noch
-// nicht veröffentlicht, bleibt der Eintrag stehen und ginge nach dem Verlassen des Busmonitors hinaus.
-// Das Fenster ist ein paar Instruktionen breit und ohne Sperre nicht zu schließen; sendFrame() lehnt im
-// Busmonitor ohnehin ab, es braucht also ein sendFrame(), das die Prüfung unmittelbar vor dem Umschalten
-// passiert hat.
 void Transmitter::abort()
 {
-    // Nur die Vorlage verwerfen - die Warteschlange gehört dem Hauptkontext, der räumt sie beim nächsten
-    // stageNextTelegram(). Genau diese Trennung löst den Wettlauf auf, der hier früher stand.
     if (_stagedSeq != _takenSeq) _takenSeq = _takenSeq + 1;
 
     if (_state == TxState::Idle) return;
@@ -313,10 +304,9 @@ void Transmitter::abort()
 }
 
 // Verglichen wird das VOLLSTÄNDIGE Telegramm. Für den halb eingelaufenen Fall gibt es isEchoPrefix()
-// direkt darunter - GEBRAUCHT WIRD ES, und zwar von Receiver::sendAcknowledge() bei Byte 6, damit das
-// eigene Echo nicht quittiert wird. Hier stand einmal, diese Fassung sei entfernt worden und die
-// Quittungsentscheidung komme ohne aus; das war der Stand, bevor ein IP-Router 4 Quittungen je eigenem
-// Telegramm gemeldet hat. Wer isEchoPrefix() als toten Code entfernt, holt das zurück.
+// direkt darunter, und das ist KEIN toter Code: Receiver::sendAcknowledge() braucht es bei Byte 6, damit
+// das eigene Echo nicht quittiert wird. Wer es entfernt, holt sich vier Quittungen je eigenem Telegramm
+// zurück - am IP-Router gemessen.
 //
 // Zwei Bytes bleiben beim Vergleich außen vor, und beide aus demselben Grund: die BCU löscht beim
 // Wiederholen das Wiederholungs-Bit im Kontrollbyte. Das wird deshalb maskiert verglichen, und die
@@ -357,8 +347,8 @@ bool Transmitter::isEchoPrefix(const uint8_t *data, size_t length) const
 // Gemütliche Seite - läuft aus dem Hauptloop
 // ---------------------------------------------------------------------------------------------------
 
-// Ein Produzent, ein Konsument (tick()), Kopf zuletzt sichtbar gemacht - dieselbe Regel wie bei den anderen
-// beiden Ringen, damit der Tick nie einen halben Eintrag sieht.
+// Aus dem Hauptkontext, dem die Warteschlange allein gehört - der Tick sieht nur die Vorlage, die
+// stageNextTelegram() am Ende setzt.
 bool Transmitter::pushTransmitQueue(const Frame &frame)
 {
     size_t length = frame.length();

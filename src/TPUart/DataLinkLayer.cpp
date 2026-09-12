@@ -164,9 +164,6 @@ void DataLinkLayer::end()
 
 // KOMPAT: ein Einstieg für beide Hälften, wie in der alten Library.
 //
-// GETICKT WIRD HIER NUR, WENN DER TIMER GEWOLLT IST, ABER NICHT LÄUFT. Beide Teile der Bedingung tragen,
-// und die Reihenfolge, in der man sie liest, ist der ganze Punkt:
-//
 // HIER WIRD NICHT GETICKT. NIE. Der Hauptloop ist kein Antrieb für tick() - das ist eine ausdrückliche
 // Festlegung des Anwenders und keine Auslegungsfrage.
 //
@@ -179,26 +176,18 @@ void DataLinkLayer::end()
 // DER ANTRIEB IST DER TIMER, oder Timer::trigger() aus einem Kontext, den der Aufrufer selbst stellt. Gibt
 // es beides nicht, tickt nichts, und das ist die richtige Antwort: eine Plattform ohne Timer braucht eine
 // Entscheidung des Entwicklers, keine stillschweigende Notlösung.
-//
-// process() bleibt als KOMPAT-Einstieg der alten Library und ruft nur noch loop(). Für einen Aufrufer mit
-// laufendem Timer ändert das nichts - dort tat process() schon vorher nichts anderes.
 void DataLinkLayer::process()
 {
     loop();
 }
 
-// Nicht-blockierendes Gegenstück zur alten Library: dort wartete tryInitialize(baudrate) bis zu 50ms in
-// einer Busy-Loop auf die Antwort. Hier wird pro Durchlauf höchstens ein Byte betrachtet, der Ablauf ist
-// über _detectAwaitingResponse/_detectRequestSentAt auf mehrere Aufrufe verteilt.
+// NICHT BLOCKIEREND: pro Durchlauf wird höchstens ein Byte betrachtet, der Ablauf ist über
+// _detectAwaitingResponse/_detectRequestSentAt auf mehrere Aufrufe verteilt.
 //
 // LÄUFT IM HAUPTKONTEXT (aus loop()), und das ist der Grund für die Aufteilung in searchBaudRate() und
 // reconnect(): pro Kandidat wird das Interface neu konfiguriert, und das gehört in keinen Interrupt. Der
-// Tick kehrt deshalb um, solange !_everConnected - siehe den Block im Header.
-//
-// GESUCHT wird die Baudrate nur EINMAL. Sie ist eine Hardware-Eigenschaft der BCU (beim TP-UART 2+ etwa der
-// BDS-Pin) und kann sich im Betrieb nicht ändern. Nach einem Verbindungsverlust übernimmt darum
-// reconnect() mit der bekannten Rate; eine andere zu finden verlangt einen Neustart. Diese Funktion läuft
-// danach nie wieder.
+// Tick kehrt deshalb um, solange !_everConnected - siehe den Block im Header, dort steht auch, warum nur
+// einmal gesucht wird.
 void DataLinkLayer::searchBaudRate()
 {
     if (_detectAwaitingResponse)
@@ -350,9 +339,8 @@ void DataLinkLayer::controlByteSent(uint8_t code)
         // Mit dem Moduswechsel ist der ganze Sendeweg hinfällig: der Chip nimmt keine Telegrammdienste mehr
         // an, und was er von einem laufenden Telegramm schon hat, ergibt als halbes Telegramm keinen Sinn -
         // auf dem Bus hat nie jemand einen Anfang gesehen. Abgebrochen wird deshalb, NICHT wie beim Reset
-        // von vorn begonnen, und die Warteschlange gleich mit verworfen: was erst nach dem Verlassen des
-        // Modus hinausginge, wäre dann längst überholt. Den Heap gibt loop() frei, wie bei jedem anderen
-        // abgeholten Telegramm auch.
+        // von vorn begonnen. Die Warteschlange räumt der Hauptkontext beim nächsten stageNextTelegram():
+        // was erst nach dem Verlassen des Modus hinausginge, wäre dann längst überholt.
         _transmitter.abort();
 
         // BUSMON AN HEISST BUSY AUS. Der Chip nimmt im Busmonitor keine Telegramme mehr an und quittiert
@@ -546,21 +534,6 @@ void DataLinkLayer::processConnectionState()
         printMessage("BCU connected (%u baud)", (unsigned)_connectedBaudRate);
     }
 
-    // REIHENFOLGE UND VORZEICHEN SIND HIER BEIDES PFLICHT, und beides hat gefehlt.
-    //
-    // _lastReceivedAt schreibt der Tick, also ein Interrupt, und zwar mitten zwischen zwei beliebige
-    // Instruktionen von hier. Stand `now = millis()` VOR dem Lesen von _lastReceivedAt, dann konnte
-    // dazwischen ein Byte eintreffen und einen Zeitstempel setzen, der GRÖSSER ist als das schon
-    // eingefrorene now. Die Differenz wurde negativ, lief als uint32_t auf ~4,29 Mrd. über und war damit
-    // sicher >= der Frist: sofortiger Verbindungsabbruch, obwohl gerade eben ein Byte kam.
-    //
-    // Das Fenster ist nur ein paar Instruktionen breit - bei 38400 Baud trifft aber alle ~286µs ein Byte
-    // hinein. Der Fehler trat deshalb ausgerechnet unter Last auf (ETS-Programmierung über den Router)
-    // und war sonst kaum zu provozieren.
-    //
-    //   1. ZUERST den Zeitstempel greifen, DANACH die Uhr lesen. Dann liegt now nie vor last.
-    //   2. Trotzdem VORZEICHENBEHAFTET vergleichen: der Tick kann auch nach Schritt 1 noch schreiben, und
-    //      ein minimal vorauseilender Zeitstempel bedeutet "gerade eben empfangen", nicht "ewig her".
     // IM BUSMONITOR RUHT DIE ÜBERWACHUNG, und das ist keine Bequemlichkeit, sondern Notwendigkeit. Sie
     // ruht auf zwei Beinen, und im Busmonitor bricht das zweite weg: Bus-Verkehr zählt als Lebenszeichen,
     // und auf einem ruhigen Bus hält die sekündliche Statusabfrage die Frist offen. Genau die ist hier aber
@@ -574,6 +547,18 @@ void DataLinkLayer::processConnectionState()
     // ohnehin, es hängt nichts daran.
     if (_busMonitor) return;
 
+    // REIHENFOLGE UND VORZEICHEN SIND HIER BEIDES PFLICHT, und beides hat gefehlt. _lastReceivedAt schreibt
+    // der Tick, also ein Interrupt, und zwar mitten zwischen zwei beliebige Instruktionen von hier. Stand
+    // `now = millis()` VOR dem Lesen von _lastReceivedAt, dann konnte dazwischen ein Byte eintreffen und
+    // einen Zeitstempel setzen, der GRÖSSER ist als das schon eingefrorene now. Die Differenz wurde negativ,
+    // lief als uint32_t auf ~4,29 Mrd. über und war damit sicher >= der Frist: sofortiger
+    // Verbindungsabbruch, obwohl gerade eben ein Byte kam. Das Fenster ist nur ein paar Instruktionen breit
+    // - bei 38400 Baud trifft aber alle ~286µs ein Byte hinein, der Fehler trat deshalb ausgerechnet unter
+    // Last auf (ETS-Programmierung über den Router).
+    //
+    //   1. ZUERST den Zeitstempel greifen, DANACH die Uhr lesen. Dann liegt now nie vor last.
+    //   2. Trotzdem VORZEICHENBEHAFTET vergleichen: der Tick kann auch nach Schritt 1 noch schreiben, und
+    //      ein minimal vorauseilender Zeitstempel bedeutet "gerade eben empfangen", nicht "ewig her".
     uint32_t last = _lastReceivedAt;
     uint32_t now = millis();
 
@@ -646,13 +631,9 @@ void DataLinkLayer::handleControlEntry(const uint8_t *data, size_t length)
     {
         uint8_t errors = (uint8_t)(value ^ U_STATE_MASK);
 
-        // EINZELN GEZÄHLT, und zwar hier und nicht in Statistics: die Zuordnung Bit -> Zähler braucht die
-        // Protokollkonstanten, und die kennt nur diese Schicht. Statistics bleibt ein reiner Zählerspeicher.
-        //
-        // Nötig ist das, weil _stateErrors die Bits nur verodert und beim Ausgeben löscht - der Chip meldet
-        // jedes Ereignis genau einmal, "einmal vor Stunden" und "dauernd" sähen dort also gleich aus. Und
-        // einzeln statt als Summe, weil es fünf verschiedene Diagnosen sind: eine stehende
-        // Übertemperaturwarnung ist etwas anderes als gelegentliche Kollisionen auf dem Bus.
+        // Die Zuordnung Bit -> Zähler steht HIER und nicht in Statistics: sie braucht die
+        // Protokollkonstanten, und die kennt nur diese Schicht. Warum überhaupt einzeln gezählt wird, steht
+        // an den Feldern in Statistics.h.
         if (errors & U_STATE_SLAVE_COLLISION) _statistics.incrementChipSlaveCollisions();
         if (errors & U_STATE_RECEIVE_ERROR) _statistics.incrementChipReceiveErrors();
         if (errors & U_STATE_TRANSMIT_ERROR) _statistics.incrementChipTransmitErrors();
@@ -777,12 +758,7 @@ void DataLinkLayer::showStateErrors()
 // ---------------------------------------------------------------------------------------------------
 
 // Aus dem Hauptkontext. Gesetzt wird sofort, wenn die Verbindung steht - sonst holt es die
-// Konfigurations-Epoche nach, sobald die BCU antwortet.
-//
-// Zur Adresse 0: sie steht für "keine" und wird deshalb nicht abgesetzt - der Chip behält damit die
-// zuletzt gesetzte Adresse und quittiert weiter. Abschaltbar ist die Adressauswertung nämlich überhaupt
-// nur durch einen Reset ("After reset the address evaluation is deactivated again"), es gibt keinen Dienst
-// dafür. _autoAcknowledge bleibt darum absichtlich stehen: er beschreibt den Chip, nicht unseren Wunsch.
+// Konfigurations-Epoche nach, sobald die BCU antwortet. Zur Adresse 0 siehe den Header.
 bool DataLinkLayer::setOwnAddress(uint16_t address)
 {
     _ownAddress = address;
@@ -859,16 +835,7 @@ bool DataLinkLayer::applyConfiguration()
         // TP-UART is activated" (Siemens p.23). Deshalb wird der Zustand HIER gesetzt und nicht erst aus
         // dem U_Configure.ind heraus: das gibt es nur beim NCN. Der TPUART2 hat den Dienst gar nicht
         // (Fig. 25 kennt host-seitig nur Reset-, ProductID-, State- und L_Data.confirm-Indication), dort
-        // wäre also nie eine Bestätigung gekommen und wir hätten neben dem Chip weiterquittiert.
-        //
-        // Gesetzt wird beim Einreihen, nicht beim Absenden. Es bleibt damit ein Fenster, in dem weder der
-        // Chip quittiert (er hat die Adresse noch nicht, und aktiv wird sie ohnehin erst "after the KNX
-        // bus becomes idle", NCN5130 p.38) noch wir (wir halten uns schon zurück). Ein Telegramm, das
-        // genau dann für uns hereinkommt, bleibt unquittiert und wird vom Absender wiederholt - dann
-        // greift der Chip. Die Umkehrung wäre schlechter: quittieren wir neben dem Chip, wird auf dem NCN
-        // nebenbei ein aktiver BUSY-Modus gelöscht ("BUSY mode is deactivated immediately if the host
-        // controller confirms a frame by sending U_Ackn.req", p.35) - und ohne Bestätigung vom Chip
-        // (TPUART2) hätte diese Überlappung kein Ende.
+        // wäre also nie eine Bestätigung gekommen und das Flag stünde für immer falsch.
         if (!queued) complete = false;
         else _autoAcknowledge = true;
     }
@@ -968,27 +935,21 @@ bool DataLinkLayer::busyMode(bool state)
     return true;
 }
 
-// Der Busy-Modus endet nach TPUART_BUSY_MODE_MS von selbst - übernommen aus der alten Library, und dort
-// steht auch die Begründung: der TPUART2 verlässt ihn NACH 700ms IN HARDWARE, der NCN512x nicht. Ohne
-// dieses Nachziehen verhielten sich die beiden Chips also grundverschieden, und auf dem NCN bliebe ein
-// einmal gesetzter Busy-Modus für immer stehen, wenn der Aufrufer ihn nicht selbst zurücknimmt.
-//
-// Läuft aus loop(), also demselben Kontext, aus dem busyMode() gerufen wird - _busyModeSince hat damit
-// genau einen Schreiber und braucht weder volatile noch die Vorzeichenregel aus processConnectionState().
-// Aus demselben Grund räumt resetIndication() das Feld NICHT mit auf, obwohl ein Reset den Busy-Modus im
-// Chip beendet: die Funktion läuft im Tick, und ein zweiter Schreiber wäre der teurere Fehler. Die Folge
-// ist ein einzelnes überflüssiges U_QuitBusy.req nach der Frist, das einen bereits gelöschten Zustand
-// noch einmal löscht.
-//
-// DIE ABSAGE SENDET DER CHIP, NICHT WIR: "During this time and when autoacknowledge is active, NCN5130
-// rejects the frames whose destination address corresponds to the stored physical address by sending the
-// BUSY acknowledge" (S. 35). Solange der Modus läuft, hält sich Receiver::sendAcknowledge() deshalb heraus -
-// jedes U_Ackn.req von uns würde den Modus beenden statt ihn zu ergänzen. Die Begründung steht dort.
+// Aus dem TICK: ein U_Ackn.req ist rausgegangen und hat damit den Busy-Modus im Chip beendet (S. 35).
+// Über ein Flag statt direkt, damit _busyModeSince seinen einzigen Schreiber behält.
 void DataLinkLayer::reportBusyModeCancelled()
 {
     _busyModeCancelled = true;
 }
 
+// Nimmt den Busy-Modus nach TPUART_BUSY_MODE_MS von selbst zurück - die Begründung für die Frist steht an
+// der Konstante im Header.
+//
+// Läuft aus loop(), also demselben Kontext, aus dem busyMode() gerufen wird - _busyModeSince hat damit genau
+// einen Schreiber und braucht weder volatile noch die Vorzeichenregel aus processConnectionState(). Aus
+// demselben Grund räumt resetIndication() das Feld NICHT mit auf, obwohl ein Reset den Busy-Modus im Chip
+// beendet: die Funktion läuft im Tick. Die Folge ist ein einzelnes überflüssiges U_QuitBusy.req nach der
+// Frist, das einen bereits gelöschten Zustand noch einmal löscht.
 void DataLinkLayer::checkBusyMode()
 {
     // Der Tick hat quittiert - damit ist der Modus im Chip weg, ganz gleich wie lange die Frist noch

@@ -137,14 +137,14 @@ class DataLinkLayer;
 //            Bewusst NICHT als eigener Task mit delayMicroseconds(): der bräuchte einen ganzen Kern für
 //            sich, und auf Kern 0 sitzen im echten Gerät WLAN und Bluetooth.
 //
-// Auf jeder anderen Plattform meldet supported() false und add() schlägt fehl - der Aufrufer bleibt dann
-// beim Antrieb aus dem Hauptloop (DataLinkLayer::process()).
+// Auf jeder anderen Plattform meldet supported() false und add() schlägt fehl - dann tickt NICHTS, bis
+// jemand trigger() aus einem eigenen Kontext ruft. Einen Rückfall auf den Hauptloop gibt es bewusst nicht:
+// DataLinkLayer::process() tickt nie (Begründung dort).
 //
 // NUR EIN ANTRIEB GLEICHZEITIG JE DataLinkLayer. Treibt dieser Timer eine Instanz, darf tick() für sie von
 // nirgendwo sonst kommen: zwei Kontexte in derselben State-Machine sind kein Nachteil, sondern ein Defekt.
-// process() prüft das selbst: es tickt nur, solange der Timer die Instanz nicht treibt. Wer tick() lieber
-// selbst treibt - eigener Task, fremder Timer, zweiter Kern, trigger() -, ruft im Hauptloop loop() statt
-// process(). NICHTS ZU RUFEN IST DIE ABMELDUNG; einen Schalter dafür gibt es bewusst nicht.
+// Wer selbst treiben will - eigener Task, fremder Timer, zweiter Kern -, hält den Timer mit setInterval(0)
+// an und ruft trigger().
 class Timer
 {
   private:
@@ -213,8 +213,8 @@ class Timer
     static bool supported();
 
     // Trägt eine Instanz ein und startet den Timer, falls er noch nicht läuft. Liefert false, wenn die
-    // Plattform keinen Timer hat, das Intervall 0 ist oder alle Plätze belegt sind - dann tickt für diese
-    // Instanz weiterhin process(), und DataLinkLayer::usesTimer() sagt es.
+    // Plattform keinen Timer hat, das Intervall 0 ist oder alle Plätze belegt sind - dann wird diese Instanz
+    // nur noch von trigger() getickt, und DataLinkLayer::usesTimer() sagt es.
     bool add(DataLinkLayer &dll);
 
     // Trägt eine Instanz aus. Nach der Rückkehr läuft garantiert kein tick() mehr für sie - das ist die
@@ -245,9 +245,8 @@ class Timer
     // einen Aufrufer, der den Takt aus einem eigenen Task, einem fremden Timer oder vom zweiten Kern setzen
     // will. Tut genau das, was der plattformeigene Callback tut: ein tick() je eingetragener Instanz.
     //
-    // WER DAS BENUTZT, RUFT IM HAUPTLOOP loop() UND NICHT process(): process() tickt selbst, solange der
-    // Timer diese Instanz nicht treibt, und beides zusammen wären zwei Tick-Kontexte auf einer
-    // Schnittstelle - ein Defekt, kein Nachteil.
+    // NEBEN EINEM LAUFENDEN TIMER IST DAS EIN DEFEKT - zwei Tick-Kontexte auf einer Schnittstelle. Wer von
+    // Hand treibt, hält den Timer vorher mit setInterval(0) an.
     //
     // Es gilt dieselbe Anforderung wie an den Callback: der Aufrufkontext muss das dürfen, was tick() tut.
     // Auf dem ESP32 heißt das kein ISR, weil uart_write_bytes() einen Mutex nimmt.
