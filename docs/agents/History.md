@@ -34,6 +34,21 @@ Ausdrücklich zurückgestellt (Entscheidung des Anwenders, nicht vergessen):
 - Das **Ergebnis** des `L_Data.con` auszuwerten. Es gibt den Sendeweg frei, aber sein MSB
   (positive/negative Bestätigung) wird nur protokolliert, nicht verarbeitet - eine negative Bestätigung
   sollte irgendwann eine Wiederholung auslösen.
+- **Kein `IRAM_ATTR` für den Tick-Pfad auf dem ESP32.** Getestet mit 85 markierten Funktionen (Timer,
+  Tick, Receiver, Transmitter, Statistik-Zähler, `ESP32`-Interface) am Router mit NCN5130, jeweils im
+  Release-Build: Max run 344µs (ack 212µs) mit IRAM gegen 353µs (ack 233µs) ohne - kein messbarer
+  Gewinn, dafür dauerhaft belegter knapper IRAM. Die Gründe: `uart_get_buffered_data_len()` liegt als
+  Treiberfunktion ohnehin im Flash, der Leerlauf-Tick liest also bei jedem Durchlauf von dort; ein
+  Pfad, der 2000-mal je Sekunde läuft, fällt nicht aus dem Flash-Cache; und während eines
+  Flash-Schreibvorgangs hält ESP-IDF den `esp_timer`-Task trotzdem an. Der Quittungs-Callback des
+  Aufrufers bliebe ohnehin im Flash.
+  Falls der Leerlauf-Tick doch schlanker werden muss, ist der Ansatz nicht IRAM, sondern den
+  Treiberaufruf zu vermeiden: `available()` fragt `uart_get_buffered_data_len()` erst nach einem
+  Daten-Event aus der Event-Queue (`xQueueReceive`, im RAM). Das ändert die Pausenerkennung und braucht
+  einen Hardwarelauf. Anlass wäre ein Deferred, das im Release-Build über Stunden auffällig bleibt.
+  **Tick-Werte nur im Release-Build vergleichen.** Die `develop`-Umgebungen erben aus OGM-Common
+  `build_type = debug` und damit `-O0`: dort lagen Max run 1203µs (ack 793µs) und Deferred bei rund
+  140 je Stunde - der vermeintliche Rückschritt der Library war ausschließlich der Build-Typ.
 
 ## Fehler, die hier schon einmal gemacht wurden
 
